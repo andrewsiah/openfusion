@@ -6,24 +6,9 @@ Cognition's [Devin Fusion](https://cognition.com/blog/devin-fusion) pairs a fron
 
 ![Artificial Analysis Coding Agent Index v1.5. Score: Claude Code Fable 5.1 62.2, Devin Fusion Fable 5.1 + SWE-2 61.7, Codex Astra 61.6, Devin Fusion Astra + SWE-2 58.9. Cost: Fusion is 36% and 39% cheaper.](docs/images/devin-fusion-coding-agent-index.png)
 
-| Agent | Score (higher is better) | Cost (lower is better) |
-|---|---|---|
-| Claude Code, Fable 5.1 (max) | 62.2 | baseline |
-| **Devin Fusion, Fable 5.1 + SWE-2** | **61.7** | **−36%** |
-| Codex, Astra (max) | 61.6 | baseline |
-| **Devin Fusion, Astra + SWE-2** | **58.9** | **−39%** |
-
 Per benchmark the saving is 11–46%, with scores within a few points of the frontier model alone and sometimes above it:
 
 ![Per-benchmark scores and cost per task for Fable 5.1, Fusion Fable 5.1 + SWE-2, Astra, and Fusion Astra + SWE-2 across DeepSWE 1.1, Terminal-Bench 4, SWE-Atlas QnA, Vals Code Migration, and FrontierCode 1.1](docs/images/devin-fusion-benchmarks.png)
-
-| Benchmark | Fable 5.1 | Fusion (Fable 5.1 + SWE-2) | Astra | Fusion (Astra + SWE-2) |
-|---|---|---|---|---|
-| DeepSWE 1.1 | 64.3 · $14.63 | 63.1 · $7.88 (−46%) | 67.6 · $7.88 | 67.3 · $4.69 (−40%) |
-| Terminal-Bench 4 | 57.6 · $17.46 | 56.1 · $13.37 (−23%) | 55.6 · $10.08 | 50.0 · $6.06 (−40%) |
-| SWE-Atlas QnA | 64.8 · $7.57 | 65.9 · $5.00 (−34%) | 61.8 · $5.72 | 59.4 · $3.59 (−37%) |
-| Vals Code Migration | 54.6 · $70.97 | 57.3 · $42.00 (−41%) | 67.7 · $44.36 | 61.3 · $35.51 (−20%) |
-| FrontierCode 1.1 (Extended) | 63.6 · $2.68 | 63.5 · $1.67 (−38%) | 63.1 · $2.62 | 63.4 · $2.34 (−11%) |
 
 *Source: Cognition's Devin Fusion announcement. The insight: the smart model should be the planner, not the typist, and the two should exchange briefs and results, not whole conversations.*
 
