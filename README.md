@@ -9,7 +9,7 @@ fusion "add rate limiting to /api/upload with tests"
 
 A frontier model you already pay for (Claude **Opus/Fable** on your Claude plan) is the **lead**: it plans, writes briefs, monitors, and verifies. A cheap, fast model is the **sidekick** that does the typing: **GPT-5.6 Luna** on your ChatGPT plan, **Haiku** on your Claude plan, or **GLM-5.3 / Grok / Kimi / DeepSeek** through your own OpenRouter key. A fresh-context **reviewer** (by default GPT-5.6 Terra on your ChatGPT plan) approves or requests changes before you see "done".
 
-You get frontier judgment at a fraction of the frontier tokens and wall-clock, with no new API bill for the lead. Status: **v0.1, working prototype**. Private while we dogfood.
+You get frontier judgment at a fraction of the frontier tokens and wall-clock, with no new API bill for the lead. Status: **v0.1, working prototype**. Open source (MIT); issues and PRs welcome.
 
 ## Why
 
@@ -28,8 +28,8 @@ uv tool install git+https://github.com/andrewsiah/openfusion
 # npm  (you already have node for claude/codex; runs the bundled Python source with your python3)
 npm install -g github:andrewsiah/openfusion
 
-# Homebrew (tap; --HEAD while the repo is private)
-brew tap andrewsiah/tap && brew install --HEAD andrewsiah/tap/openfusion
+# Homebrew (tap)
+brew tap andrewsiah/tap && brew install andrewsiah/tap/openfusion
 
 # pipx / pip
 pipx install git+https://github.com/andrewsiah/openfusion
@@ -38,7 +38,7 @@ pipx install git+https://github.com/andrewsiah/openfusion
 git clone https://github.com/andrewsiah/openfusion && cd openfusion && uv tool install .
 ```
 
-`fusion --version` should print `fusion 0.1.0`. Once the repo is public, `uv tool install openfusion`, `npm i -g openfusion`, and a stable `brew install andrewsiah/tap/openfusion` will work without the git URL. The npm wrapper picks the first Python ≥ 3.11 it finds (`python3.13`, `python3.12`, `python3.11`, `python3`, `python`); override with `FUSION_PYTHON=/path/to/python`.
+`fusion --version` should print `fusion 0.1.0`. PyPI and npm-registry releases (`uv tool install openfusion`, `npm i -g openfusion`) are coming; until then use the git URLs above. The npm wrapper picks the first Python ≥ 3.11 it finds (`python3.13`, `python3.12`, `python3.11`, `python3`, `python`); override with `FUSION_PYTHON=/path/to/python`.
 
 Then install and log in to the harnesses for the roles you want. You need at least the lead's:
 

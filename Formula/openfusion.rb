@@ -1,6 +1,6 @@
 # Homebrew formula for OpenFusion. Lives in the tap repo andrewsiah/homebrew-tap as Formula/openfusion.rb;
-# this copy is kept in sync in the main repo. While the repo is private only `--HEAD` works:
-#   brew tap andrewsiah/tap && brew install --HEAD andrewsiah/tap/openfusion
+# this copy is kept in sync in the main repo.
+#   brew tap andrewsiah/tap && brew install andrewsiah/tap/openfusion      (or --HEAD for main)
 class Openfusion < Formula
   include Language::Python::Virtualenv
 
