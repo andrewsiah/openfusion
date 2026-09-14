@@ -22,7 +22,7 @@ OpenFusion doesn't build a new agent harness. It runs the **unmodified** coding-
 Pick whichever package manager you already use. All paths need only **Python ≥ 3.11** on your machine (the package itself has zero dependencies).
 
 ```bash
-# uv (recommended)               → `fusion`, `fusion-delegate`, `fusion-test` on PATH
+# uv (recommended)               → `fusion`, `fusion-delegate`, `fusion-cua` on PATH
 uv tool install git+https://github.com/andrewsiah/openfusion
 
 # npm  (you already have node for claude/codex; runs the bundled Python source with your python3)
@@ -44,8 +44,8 @@ Then install and log in to the harnesses for the roles you want. You need at lea
 
 | Harness | Install | Log in / key | Used for |
 |---|---|---|---|
-| Claude Code | `npm i -g @anthropic-ai/claude-code` | run `claude` once and sign in with your Claude plan | lead (`claude:opus`, `claude:fable`), sidekick (`claude:haiku`), tester (`claude:sonnet` + `--chrome`), reviewer |
-| Codex CLI | `npm i -g @openai/codex` | `codex login` with your ChatGPT plan | sidekick (`codex:gpt-5.6-luna`), tester and reviewer (`codex:gpt-5.6-terra`) |
+| Claude Code | `npm i -g @anthropic-ai/claude-code` | run `claude` once and sign in with your Claude plan | lead (`claude:opus`, `claude:fable`), sidekick (`claude:haiku`), cua (`claude:sonnet` + `--chrome`), reviewer |
+| Codex CLI | `npm i -g @openai/codex` | `codex login` with your ChatGPT plan | sidekick (`codex:gpt-5.6-luna`), cua and reviewer (`codex:gpt-5.6-terra`) |
 | Pi | `npm i -g @mariozechner/pi-coding-agent` | `export OPENROUTER_API_KEY=sk-or-…` (or put it in `./.env`) | any BYOK model: `pi:z-ai/glm-5.3@openrouter`, `pi:x-ai/grok-4.6@openrouter`, `pi:grok-4.6@xai` … |
 | Grok Build CLI | xAI's `grok` | grok.com login | sidekick (`grok:grok-4.6`) |
 
@@ -94,16 +94,16 @@ review 1   codex:gpt-5.6-terra                  19.5s  approve: ...
 
 The lead never edits files itself (`edits=0`); it briefs the sidekick, verifies with your test command and `git diff`, and reports `DONE:`. The reviewer then checks the diff with fresh context. If it requests changes, the feedback goes back to the lead's live session for one more round. Changes land **uncommitted** in your working tree for you to inspect and commit. Reports are saved to `.fusion/runs/`; `fusion runs` lists them. Add `.fusion/` to your `.gitignore`.
 
-## The tester role (end-to-end / computer use)
+## The CUA role (computer-use agent)
 
-Coding models and computer-use models sit on different cost/capability curves, so the **tester** is its own role with its own spec. When set, the lead gets a second tool, `fusion-test "<brief>"`, and is told to use it after implementation and before reporting DONE: run the CLI or app as a user would, hit endpoints, click through the UI if the harness has browser/computer-use tools, and report PASS/FAIL per scenario with evidence. The tester never edits source; the lead turns its FAIL findings into new sidekick briefs.
+Coding models and computer-use models sit on different cost/capability curves, so the **CUA** (computer-use agent) is its own role with its own spec. It runs the end-to-end tests, and any other computer-use task the lead needs: reproduce a bug in the browser, exercise a workflow, check a live page. When set, the lead gets a second tool, `fusion-cua "<brief>"`, and is told to e2e-test through it before reporting DONE: run the CLI or app as a user would, hit endpoints, click through the UI if the harness has browser/computer-use tools, and report PASS/FAIL per scenario with evidence. The CUA never edits source; the lead turns its FAIL findings into new sidekick briefs.
 
 ```bash
-fusion "add a --json flag to the CLI" --tester codex:gpt-5.6-terra --test-cmd "python3 -m unittest -q"
-fusion "fix the signup form validation" --tester claude:sonnet   # with FUSION_TESTER_ARGS="--chrome" for Claude in Chrome
+fusion "add a --json flag to the CLI" --cua codex:gpt-5.6-terra --test-cmd "python3 -m unittest -q"
+fusion "fix the signup form validation" --cua claude:sonnet   # with FUSION_CUA_ARGS="--chrome" for Claude in Chrome
 ```
 
-Pick a harness with the tools your app needs: Codex has browser/computer-use built in; Claude Code can drive Chrome (`FUSION_TESTER_ARGS="--chrome"`) or a Playwright MCP server; Pi/OpenRouter models suit CLI and HTTP flows. `FUSION_EXEC_ARGS` does the same for the sidekick. The tester keeps its own persistent session like the sidekick, and shows up as its own row in the report. Config key: `tester = "codex:gpt-5.6-terra"`; env `FUSION_TESTER`.
+Pick a harness with the tools your app needs: Codex has browser/computer-use built in; Claude Code can drive Chrome (`FUSION_CUA_ARGS="--chrome"`) or a Playwright MCP server; Pi/OpenRouter models suit CLI and HTTP flows. `FUSION_EXEC_ARGS` does the same for the sidekick. The CUA keeps its own persistent session like the sidekick, and shows up as its own row in the report. Config key: `cua = "codex:gpt-5.6-terra"`; env `FUSION_CUA`.
 
 ## Choosing models
 
@@ -139,7 +139,7 @@ fusion "task"
   │                                   fusion-delegate tool. Plans, briefs, verifies, reports DONE.
   ├─ Sidekick  codex / pi / claude    one persistent session, resumed per brief (its prompt cache stays warm).
   │                                   Edits files, runs tests, reports back.
-  ├─ Tester    codex / claude / pi    optional; e2e / computer-use verification via fusion-test, own session, never edits.
+  ├─ CUA       codex / claude / pi    optional computer-use agent; e2e tests + other computer-use tasks via fusion-cua, own session, never edits.
   ├─ Reviewer  codex / claude         fresh context, read-only, strict-JSON verdict; 1 feedback round by default.
   └─ Report    .fusion/runs/<id>.json wall-clock, per-role turns/tokens/cost, lead edit count.
 ```
@@ -154,7 +154,7 @@ OpenFusion never reads, stores, or proxies your Claude or ChatGPT credentials. I
 
 - **`402 … fewer max_tokens` from OpenRouter (Pi)**: your balance can't cover Pi's default 16k output cap. Top up, or `export FUSION_PI_MAX_TOKENS=4096`; fusion-delegate then writes a private Pi model config with that cap and the model's OpenRouter price.
 - **Codex sidekick fails with `bwrap: … Operation not permitted`**: Codex's Linux sandbox doesn't work on that VM. fusion inherits your `~/.codex/config.toml` `sandbox_mode`; set it there, or `export FUSION_CODEX_SANDBOX=workspace-write` where bwrap works.
-- **`fusion-test` says "no tester configured"**: pass `--tester <spec>` (or set `tester` in config); without it the lead is told to verify via the sidekick and test command.
+- **`fusion-cua` says "no CUA configured"**: pass `--cua <spec>` (or set `cua` in config); without it the lead is told to verify via the sidekick and test command.
 - **Lead ignores the role / does things from your global instructions**: keep the default safe mode. Codex sidekicks still read `~/.codex/AGENTS.md`; the sidekick prompt tells them the lead owns task tracking, so tracker-heavy global instructions don't fire.
 - **Lead edits files itself**: check `edits=` in the report; add `--strict`.
 - **Reviewer says `error` or hangs**: see `.fusion/state/<run>/review-last.json` and `lead.jsonl`; try `--review claude:opus` or `--review none`.

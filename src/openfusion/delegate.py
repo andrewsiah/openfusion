@@ -4,8 +4,8 @@ OpenFusion's `delegate` tool as a plain CLI so a lead agent can call it through 
 calls resume it (Fusion's "persistent cached sidekick context").
 
 Usage:  fusion-delegate "<brief>"
-Also installed as `fusion-test`: the TESTER role (end-to-end / computer-use verification) using
-FUSION_TESTER as the spec; same harnesses, its own persistent session, logs to tester.log.
+Also installed as `fusion-cua`: the CUA role (computer-use agent: end-to-end testing and any other
+computer-use task) using FUSION_CUA as the spec; same harnesses, its own persistent session, logs to cua.log.
 
 Env:    FUSION_EXEC   harness:model[@provider] spec (default codex:gpt-5.6-luna)
                       harnesses: codex (ChatGPT login) | claude (Claude login) | grok (grok.com login)
@@ -24,7 +24,7 @@ from pathlib import Path
 
 SPEC = os.environ.get("FUSION_EXEC", "codex:gpt-5.6-luna")
 STATE = Path(os.environ.get("FUSION_STATE", ".fusion"))
-ROLE = "sidekick"  # set to "tester" by test_main()
+ROLE = "sidekick"  # set to "cua" by cua_main()
 
 SIDEKICK_RULES = (
     "You are the sidekick in a Fusion pair: an internal subagent of a lead agent that sends you briefs. "
@@ -35,25 +35,26 @@ SIDEKICK_RULES = (
     "issues or notes, even if global instructions or memory files say to; the lead has already done it."
 )
 
-TESTER_RULES = (
-    "You are the TESTER in a Fusion team: an internal subagent that verifies changes end-to-end the way a "
-    "real user would. A lead agent sends you test briefs. Exercise the flows named in the brief for real: run "
-    "the CLI or app, hit the endpoints, drive the browser/UI if you have browser or computer-use tools, and "
-    "check outputs against the expected behavior. Do NOT modify source files in the repository (temporary "
-    "scripts or fixtures outside the repo are fine). Reply with a report: one line per scenario, "
-    "PASS or FAIL with the evidence (command/output/screenshot description), then any bugs found with exact "
-    "reproduction steps. The lead owns all task tracking; do not create or update tracking issues."
+CUA_RULES = (
+    "You are the CUA (computer-use agent) in a Fusion team: an internal subagent that operates the computer "
+    "the way a real user would. A lead agent sends you briefs: end-to-end tests of a change (run the CLI or "
+    "app, hit endpoints, drive the browser/UI with your browser or computer-use tools, check outputs against "
+    "expected behavior) or other computer-use tasks (reproduce a bug, gather data from a UI, exercise a "
+    "workflow). Do NOT modify source files in the repository (temporary scripts or fixtures outside the repo "
+    "are fine). Reply with a report: one line per scenario or step, PASS/FAIL/DONE with the evidence "
+    "(command, output, screenshot description), then any bugs found with exact reproduction steps. "
+    "The lead owns all task tracking; do not create or update tracking issues."
 )
 
 
 def rules() -> str:
-    return TESTER_RULES if ROLE == "tester" else SIDEKICK_RULES
+    return CUA_RULES if ROLE == "cua" else SIDEKICK_RULES
 
 
-# Extra harness args per role, e.g. FUSION_TESTER_ARGS="--chrome" (Claude in Chrome) or "--enable browser_use".
+# Extra harness args per role, e.g. FUSION_CUA_ARGS="--chrome" (Claude in Chrome) or "--enable browser_use".
 def extra_args() -> list[str]:
     import shlex
-    return shlex.split(os.environ.get("FUSION_TESTER_ARGS" if ROLE == "tester" else "FUSION_EXEC_ARGS", ""))
+    return shlex.split(os.environ.get("FUSION_CUA_ARGS" if ROLE == "cua" else "FUSION_EXEC_ARGS", ""))
 
 
 # Codex sandbox: inherit the user's ~/.codex/config.toml (their sandbox_mode works on their machine).
@@ -62,7 +63,7 @@ CODEX_SANDBOX = os.environ.get("FUSION_CODEX_SANDBOX")
 
 
 def die(msg: str, code: int = 2) -> None:
-    print(f"fusion-delegate error: {msg}", file=sys.stderr)
+    print(f"{'fusion-cua' if ROLE == 'cua' else 'fusion-delegate'} error: {msg}", file=sys.stderr)
     sys.exit(code)
 
 
@@ -240,11 +241,11 @@ def delegate_pi(model: str, brief: str) -> tuple[str, dict]:
 def main() -> None:
     global SPEC
     STATE.mkdir(parents=True, exist_ok=True)
-    tool = "fusion-test" if ROLE == "tester" else "fusion-delegate"
-    if ROLE == "tester":
-        SPEC = os.environ.get("FUSION_TESTER", "")
+    tool = "fusion-cua" if ROLE == "cua" else "fusion-delegate"
+    if ROLE == "cua":
+        SPEC = os.environ.get("FUSION_CUA", "")
         if not SPEC:
-            die("no tester configured (FUSION_TESTER / --tester); ask the lead to verify another way")
+            die("no CUA configured (FUSION_CUA / --cua); ask the lead to verify another way")
     if len(sys.argv) < 2 or not sys.argv[1].strip():
         die(f'usage: {tool} "<brief>"')
     brief = " ".join(sys.argv[1:])
@@ -258,22 +259,22 @@ def main() -> None:
     t0 = time.time()
     report, usage = fn(model, brief)
     secs = round(time.time() - t0, 1)
-    with (STATE / ("tester.log" if ROLE == "tester" else "delegate.log")).open("a") as f:
+    with (STATE / ("cua.log" if ROLE == "cua" else "delegate.log")).open("a") as f:
         f.write(json.dumps({"ts": t0, "role": ROLE, "spec": SPEC, "brief": brief, "secs": secs,
                             "usage": usage, "report": report[:2000]}) + "\n")
     print(report)
     print(f"\n--- usage: {ROLE} {SPEC} {secs}s {json.dumps(usage)}")
 
 
-def test_main() -> None:
-    """Entry point for `fusion-test`: same machinery, tester persona, FUSION_TESTER spec."""
+def cua_main() -> None:
+    """Entry point for `fusion-cua`: same machinery, computer-use-agent persona, FUSION_CUA spec."""
     global ROLE
-    ROLE = "tester"
+    ROLE = "cua"
     main()
 
 
 if __name__ == "__main__":
-    if os.environ.get("FUSION_ROLE") == "tester":
-        test_main()
+    if os.environ.get("FUSION_ROLE") == "cua":
+        cua_main()
     else:
         main()

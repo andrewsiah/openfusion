@@ -9,7 +9,7 @@
   "bin": {
     "fusion": "bin/fusion.js",
     "fusion-delegate": "bin/fusion-delegate.js",
-    "fusion-test": "bin/fusion-test.js"
+    "fusion-cua": "bin/fusion-cua.js"
   },
   "files": ["bin", "src/openfusion", "README.md", "LICENSE"],
   "engines": { "node": ">=18" },
