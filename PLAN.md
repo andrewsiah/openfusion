@@ -24,7 +24,7 @@ Status: **plan + research complete, no code yet** (2026-09-14). Tracking: Linear
 2. **Speed and cost first, without a quality cliff.** Cheap/fast executors (Luna, Haiku, GLM, Grok, Kimi, DeepSeek) do the bulk of tokens; the frontier model spends tokens only on planning, ambiguity, and review.
 3. **Bring your own key for executors/reviewers.** OpenRouter (or any Anthropic-/Responses-compatible endpoint) plugs in as a first-class option.
 4. **Fusion-native, not "sub-agents with a hat on".** Persistent lead and sidekick contexts; brief/result exchange; hands-off lead; fresh-context review; escalation when the sidekick struggles; per-task cost + wall-clock report.
-5. **Lightweight.** One package, no daemon, no database, no cloud. Installs in seconds. Config is one TOML file.
+5. **Lightweight and minimally invasive.** One package, no daemon, no database, no cloud. The harnesses run unmodified; `fusion` adds exactly two things per invocation: a role prompt and a `delegate` tool. Config is one TOML file.
 6. **Open and contributable.** Adding a harness or preset is one small file.
 
 ### Non-goals (for now)
@@ -75,7 +75,7 @@ claw-orchestrator, awslabs cli-agent-orchestrator, oh-my-claudecode, ccswarm, cl
 |---|---|---|---|
 | A | **Own harness** calling Anthropic/OpenAI APIs directly | Implement tool loop, editing, sandbox | ❌ Needs API keys (loses subscriptions), huge surface, re-invents what Claude Code/Codex do best |
 | B | **External state machine** ("pipeline"): plan → execute → review as separate one-shot harness calls | Python loop, each step a fresh `claude -p` / `codex exec` | ✅ Simple, deterministic, harness-agnostic. ❌ Lead loses persistent context; re-reads plan each step; no dynamic delegation. Closest to claw-orchestrator |
-| C | **Lead-in-harness with MCP delegate tool** ("fusion") | Run the lead as one persistent `claude -p` / `codex exec` session with write tools removed and a `delegate` MCP tool provided by `fusion`; the MCP server spawns and **resumes** persistent executor sessions | ✅ Faithful to Fusion: two persistent cached contexts, brief/result exchange, lead decides delegation dynamically, inherits harness tools/sandbox/caching. ❌ Depends on harness MCP + `--allowedTools` behavior (both stable) |
+| C | **Lead-in-harness with a role prompt + `delegate` tool** ("fusion") | Run the lead as one persistent `claude -p` / `codex exec` session, unchanged except for an appended role prompt and a `delegate` tool provided by `fusion`; the tool spawns and **resumes** persistent executor sessions | ✅ Faithful to Fusion: two persistent cached contexts, brief/result exchange, lead decides delegation dynamically, inherits harness tools/sandbox/caching. Minimal modification: two per-invocation flags. ❌ Relies on the lead following its role prompt (frontier models do; `--strict` exists if not) |
 | D | **Native sub-agents with a different model** | `claude --agents '{"exec":{"model":"haiku"}}'` | ✅ Zero code. ❌ Same vendor only, no cross-vendor executor, lead unconstrained, no cost report. This is the user's current hack |
 
 **Decision: C is the core ("fusion mode"); B is the outer loop for review and a `--mode pipeline` fallback.** D is what we're replacing.
@@ -85,8 +85,11 @@ claw-orchestrator, awslabs cli-agent-orchestrator, oh-my-claudecode, ccswarm, cl
 ```
  fusion "task"
    │
-   ├─ 1. Lead session (persistent)   claude -p --model fable  --allowedTools "Read,Grep,Glob,Bash(git *),mcp__fusion__*" \
-   │      system prompt: Fusion lead protocol  --append-system-prompt-file lead.md --mcp-config fusion-mcp.json
+   ├─ 1. Lead session (persistent)   claude -p --model fable --append-system-prompt-file lead.md --mcp-config fusion-mcp.json
+   │      (that's the whole modification: a role prompt + one extra tool; the harness keeps all its normal tools)
+   │      lead.md: "You are the lead. Teammates: sidekick <exec spec> for implementation and tests,
+   │                reviewer <review spec> for final review. Plan, brief, monitor, review. Delegate
+   │                implementation; read only what you need to plan and verify."
    │
    │      tools exposed by fusion MCP server:
    │        delegate(brief, success_criteria, constraints, files_hint, effort) -> {result, diff_summary, cost, turns}
@@ -111,7 +114,8 @@ claw-orchestrator, awslabs cli-agent-orchestrator, oh-my-claudecode, ccswarm, cl
 
 Key mechanics:
 - **Persistent sidekick context.** `delegate()` resumes the same executor session (`codex exec resume <id>`, `claude --resume <id>`, `opencode --session`). The sidekick accumulates repo understanding across briefs and its prompt cache stays warm — Fusion's central cost argument.
-- **Lead is hands-off by construction.** Write/Edit tools are removed via `--allowedTools`/`--disallowedTools` (Claude) or `--sandbox read-only` (Codex). The lead *can't* type code; it must brief. The system prompt says: read minimally, plan, brief with success criteria, verify results via the sidekick's report and targeted reads, review at the end.
+- **Lead is hands-off by instruction, not by surgery.** The role prompt tells the lead who its teammates are and that implementation goes to the sidekick; it keeps its full toolset. This matches Cognition's own description (the lead "should take minimal actions"), and frontier models follow role prompts reliably. The run report counts lead edits so drift is visible. An opt-in `--strict` flag removes Write/Edit from the lead (`--disallowedTools` on Claude, `--sandbox read-only` on Codex) for users who see the lead start typing code itself on long runs.
+- **Zero-glue fallback.** If even the MCP server feels heavy, `delegate` can be a plain `fusion delegate "<brief>"` CLI the lead calls through Bash; the role prompt just names the command. Same persistence, less structure. Decide in Phase 1 after trying both.
 - **Brief protocol.** Structured brief: objective, constraints, success criteria (tests to pass, commands to run), files hint, expected output shape, "ask back if ambiguous" allowed = yes/no (pushback knob). Sidekick returns: what changed, how verified, open questions, diff stat. Prescriptiveness ("tier") is a per-model config value: `tier = "small" | "mid" | "strong"`.
 - **Escalation heuristics (Phase 2).** If a brief fails twice, exceeds turn/time budget, or the sidekick reports "unsure", the MCP server returns an `escalate` signal; the lead may re-brief more prescriptively, split the task, or call `escalate_to_me` which temporarily grants the lead edit tools for that subtask (implemented by spawning a scoped one-shot lead-model executor session). This is our cheap stand-in for Cognition's classifiers.
 - **Single writer.** One sidekick edits at a time. Parallel sidekicks (worktrees) are Phase 3 and opt-in.
@@ -241,7 +245,7 @@ openfusion/
 **Phase 1 — MVP "fusion mode" (target: 1 week of evenings)**
 1. `Harness` adapters for `claude` and `codex` (start, resume, stream events, extract cost/usage, final message). Golden JSONL fixtures.
 2. `fusion mcp` server: `delegate`, `sidekick_status`, `done`. Delegate = build brief → resume sidekick session → stream → return structured result.
-3. `orchestrator.run()`: spawn lead with role prompt + `--mcp-config` pointing at `fusion mcp` + read-only tool allowlist; wait for `done`; write run report.
+3. `orchestrator.run()`: spawn lead with role prompt + `--mcp-config` pointing at `fusion mcp`; wait for `done`; write run report (including lead edit count).
 4. `fusion init` / `fusion doctor` / default run / `presets` / `runs`. Presets `dual`, `claude`, `codex`.
 5. Dogfood on 5 real tasks in this repo and in one of Andrew's big projects. Record cost + time vs `--solo`.
    **Exit criteria:** `fusion "…"` completes a multi-file change end-to-end on `dual`; report shows per-role cost; cheaper than solo Fable on ≥4/5 tasks with review-passing output.
@@ -285,7 +289,7 @@ openfusion/
 | Harness CLI churn breaks adapters | Pin tested versions in `fusion doctor`, golden-fixture tests per version, adapters are ~200 lines each |
 | Codex custom providers require Responses API; OpenRouter support may be partial | Verify early in Phase 2; OpenCode is the guaranteed BYOK path |
 | Quality loss on subtle/design tasks | Escalation, fresh reviewer, `--solo` one flag away, honest README |
-| Lead over-reads (kills the savings) | Tool allowlist + prompt + a "read budget" counter surfaced in the report; Phase 4 classifier |
+| Lead over-reads or starts editing itself (kills the savings) | Role prompt + lead read/edit counters in the report; opt-in `--strict` tool removal; Phase 4 classifier |
 | Running two/three agents in one repo concurrently corrupts state | Single writer; reviewer is read-only sandbox; lead has no write tools |
 | Plan quota exhaustion mid-run | Detect rate-limit events in streams, pause + resume, offer `--fallback-exec` |
 
@@ -293,7 +297,7 @@ openfusion/
 
 ## 8. Open questions (decide during Phase 1)
 1. Python vs TypeScript. Python chosen for velocity; revisit only if the MCP stdio server or JSONL streaming proves awkward.
-2. Should the lead be allowed `Bash` at all? Start with `Bash(git *)` + read tools; add `Bash(<test cmd>)` from project config so the lead can verify claims cheaply.
+2. Does prompt-only role discipline hold on long runs? Measure lead edit counts in Phase 1 dogfood; if it drifts, tighten the prompt first, make `--strict` the default only as a last resort.
 3. Reviewer default: same vendor fresh session vs cross-vendor. Default cross-vendor when both logins exist (Andrew's current practice; diversity argument), else same vendor.
 4. Where do sidekick sessions live between `fusion` invocations? Harness-native session IDs recorded in `.fusion/runs/<id>.json`; `fusion resume` reuses them.
 5. Name collision: `fusion` command vs other tools named fusion. Keep `fusion`; also install `openfusion` alias.

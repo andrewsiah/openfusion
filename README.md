@@ -21,7 +21,7 @@ Most of us already pay for Claude and/or ChatGPT, and the CLIs for both (`claude
 
 ```
 fusion "task"
-  ├─ Lead      claude:fable        persistent, read-only tools + delegate()   plans, briefs, reviews
+  ├─ Lead      claude:fable        persistent, role prompt + delegate() tool   plans, briefs, reviews
   ├─ Sidekick  codex:gpt-5.6-luna  persistent session resumed per brief       edits, runs tests, reports
   ├─ Reviewer  codex:gpt-6-astra   fresh context, read-only                   approve / request changes
   └─ Report    wall-clock + per-role cost
