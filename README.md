@@ -35,6 +35,7 @@ fusion "add rate limiting to /api/upload with tests"           # run a task in t
 
 - [Quickstart](#quickstart)
 - [Let your coding agent install it](#let-your-coding-agent-install-it)
+- [Say "use fusion" from inside your agent](#say-use-fusion-from-inside-your-agent)
 - [Roles](#roles)
 - [Install](#install)
 - [Verify the setup](#verify-the-setup)
@@ -113,6 +114,30 @@ If you cannot fetch URLs, do this instead:
 ````
 
 Prefer to install it as a reusable skill? Copy [skills/install-openfusion/SKILL.md](skills/install-openfusion/SKILL.md) into your agent's skills directory (for example `~/.claude/skills/install-openfusion/SKILL.md` for Claude Code, or `~/.agents/skills/install-openfusion/SKILL.md` for Codex) and ask the agent to "install openfusion".
+
+## Say "use fusion" from inside your agent
+
+Most people live inside Claude Code or Codex all day. When a task is big, you want to stay there and just say:
+
+> use fusion for this. Claude as lead, Terra as sidekick, Terra as the e2e tester
+
+Give your agent [skills/use-fusion/SKILL.md](skills/use-fusion/SKILL.md) and it knows how: it maps words like *orchestrator / subagent / tester* to roles, maps *Opus / Terra / Luna / GLM* to `harness:model` specs, writes a precise task string from what it already knows about your repo, picks the right `--test-cmd`, runs `fusion`, and reports back what changed, what the reviewer said, and what it cost. It stays hands-off while the run is going.
+
+Install it once:
+
+```bash
+# Claude Code
+mkdir -p ~/.claude/skills/use-fusion && curl -fsSL https://raw.githubusercontent.com/andrewsiah/openfusion/main/skills/use-fusion/SKILL.md -o ~/.claude/skills/use-fusion/SKILL.md
+
+# Codex (and other agents that read ~/.agents/skills)
+mkdir -p ~/.agents/skills/use-fusion && curl -fsSL https://raw.githubusercontent.com/andrewsiah/openfusion/main/skills/use-fusion/SKILL.md -o ~/.agents/skills/use-fusion/SKILL.md
+```
+
+Or paste this into any agent without skill support:
+
+```text
+Read https://raw.githubusercontent.com/andrewsiah/openfusion/main/skills/use-fusion/SKILL.md and follow it for this task: <your task>. Roles: <e.g. Claude lead, Terra sidekick, Terra e2e tester>.
+```
 
 ## Roles
 

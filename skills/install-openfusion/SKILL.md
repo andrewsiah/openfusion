@@ -165,6 +165,8 @@ fusion "describe the change you want" --test-cmd "your test command"
 
 Changes land uncommitted in the working tree for the user to inspect. `fusion runs` lists past runs.
 
+Finally, offer to install the companion `use-fusion` skill (`skills/use-fusion/SKILL.md` in the repo) into this agent's skills directory (`~/.claude/skills/use-fusion/` for Claude Code, `~/.agents/skills/use-fusion/` for Codex), so the user can later just say "use fusion" and you will know how to run it.
+
 ## Troubleshooting quick reference
 
 | Symptom | Fix |
