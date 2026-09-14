@@ -134,6 +134,26 @@ def delegate_grok(model: str, brief: str) -> tuple[str, dict]:
     return "\n".join(text).strip() or out.strip(), usage
 
 
+def openrouter_cost(model: str) -> dict:
+    """Per-million-token prices for an OpenRouter model id (cached in FUSION_STATE); zeros if unknown."""
+    zeros = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
+    cache = STATE / "openrouter-models.json"
+    try:
+        if not cache.exists() or time.time() - cache.stat().st_mtime > 86400:
+            import urllib.request
+            with urllib.request.urlopen("https://openrouter.ai/api/v1/models", timeout=20) as r:
+                cache.write_bytes(r.read())
+        for m in json.loads(cache.read_text())["data"]:
+            if m["id"] == model:
+                p = m["pricing"]
+                return {"input": float(p.get("prompt", 0)) * 1e6, "output": float(p.get("completion", 0)) * 1e6,
+                        "cacheRead": float(p.get("input_cache_read", 0) or 0) * 1e6,
+                        "cacheWrite": float(p.get("input_cache_write", 0) or 0) * 1e6}
+    except Exception:  # pricing is best-effort
+        pass
+    return zeros
+
+
 def delegate_pi(model: str, brief: str) -> tuple[str, dict]:
     """Pi (badlogic's pi-coding-agent): the harness for OpenRouter / open-weight models.
 
@@ -146,6 +166,18 @@ def delegate_pi(model: str, brief: str) -> tuple[str, dict]:
     sf = session_file("pi")
     sess_dir = STATE / "pi-sessions"
     sess_dir.mkdir(parents=True, exist_ok=True)
+    # Optional output-token cap (Pi defaults to 16384 for unknown models; OpenRouter refuses requests
+    # whose max_tokens exceed what the remaining balance can afford). Set FUSION_PI_MAX_TOKENS=4096
+    # to generate a private Pi config dir with a custom model entry; env keys still come from env.
+    cap = os.environ.get("FUSION_PI_MAX_TOKENS")
+    if cap:
+        cfg = STATE / "pi-config"
+        cfg.mkdir(parents=True, exist_ok=True)
+        entry = {"id": model, "name": model, "reasoning": True, "contextWindow": 200000, "maxTokens": int(cap)}
+        if provider == "openrouter":
+            entry["cost"] = openrouter_cost(model)  # so Pi's usage.cost is right for the custom entry
+        (cfg / "models.json").write_text(json.dumps({"providers": {provider: {"models": [entry]}}}))
+        os.environ["PI_CODING_AGENT_DIR"] = str(cfg)
     cmd = ["pi", "-p", "--model", f"{provider}/{model}", "--mode", "json",
            "--no-context-files", "--no-extensions", "--no-skills", "--no-prompt-templates",
            "--session-dir", str(sess_dir), "--append-system-prompt", SIDEKICK_RULES]

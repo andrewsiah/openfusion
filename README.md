@@ -63,7 +63,7 @@ python3 scripts/smoke.py --only loop --lead claude:opus --exec codex:gpt-5.6-ter
 python3 scripts/smoke.py --only loop --lead claude:opus --exec pi:z-ai/glm-5.3@openrouter --review codex:gpt-5.6-terra
 ```
 
-Verified 2026-09-14 on one Linux VM: Opus lead + Codex Terra sidekick (5/5), and Opus lead + Pi sidekick on an OpenRouter model + Codex Terra reviewer (7/7, 66s, lead $0.22, sidekick $0.01, reviewer ~106k tokens of which 77k cached).
+Verified 2026-09-14 on one Linux VM: Opus lead + Codex Terra sidekick (5/5, 40s); Opus lead + Pi/GLM-5.3 sidekick on OpenRouter + Codex Terra reviewer (7/7, 41s; lead $0.17 over 5 turns, sidekick 3.3s, reviewer 23s approve). If OpenRouter returns `402 ... fewer max_tokens`, your balance can't cover Pi's default 16k output cap: set `FUSION_PI_MAX_TOKENS=4096` (or top up) and fusion-delegate writes a private Pi model config with that cap and the model's OpenRouter price.
 
 Notes from the first runs: the lead is started with `--safe-mode` so your personal `CLAUDE.md`, skills and hooks don't leak into the role; Codex inherits your `~/.codex/config.toml` sandbox setting (its bubblewrap sandbox does not work on every Linux VM); Codex still reads your global `~/.codex/AGENTS.md`, so the sidekick and reviewer prompts say the lead owns task tracking; Pi runs with `--no-context-files` for the same reason. Pointing Claude Code itself at OpenRouter's Anthropic-compatible endpoint did not work for non-Anthropic models (401 loop), which is why BYOK models go through Pi. OpenAI strict JSON schemas need every property in `required`.
 
