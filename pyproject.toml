@@ -24,6 +24,7 @@ Homepage = "https://github.com/andrewsiah/openfusion"
 [project.scripts]
 fusion = "openfusion.cli:main"
 fusion-delegate = "openfusion.delegate:main"
+fusion-test = "openfusion.delegate:test_main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/openfusion"]

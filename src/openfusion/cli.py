@@ -6,6 +6,7 @@
   fusion review "the task"                                   fresh-context review of your current diff
   fusion runs                                                list past runs (.fusion/runs)
 
+Roles: lead (plans/briefs/verifies), sidekick (implements), tester (e2e / computer-use, optional), reviewer (fresh-context verdict).
 Role specs are  harness:model[@provider]  e.g. claude:opus, codex:gpt-5.6-luna, pi:z-ai/glm-5.3@openrouter.
 Precedence: flags > FUSION_* env > ~/.config/fusion/config.toml [defaults] > built-ins.
 """
@@ -22,7 +23,7 @@ from . import __version__
 from .core import RunConfig, format_report, run_task
 from .doctor import FAIL, format_rows, run_doctor
 
-BUILTIN = {"lead": "claude:opus", "exec": "codex:gpt-5.6-luna", "review": "codex:gpt-5.6-terra", "test_cmd": None}
+BUILTIN = {"lead": "claude:opus", "exec": "codex:gpt-5.6-luna", "review": "codex:gpt-5.6-terra", "tester": None, "test_cmd": None}
 SUBCOMMANDS = {"run", "doctor", "smoke", "runs", "review"}
 
 
@@ -41,7 +42,8 @@ def load_config() -> dict:
 def defaults() -> dict:
     d = dict(BUILTIN)
     d.update({k: v for k, v in load_config().items() if k in d})
-    for k, envk in (("lead", "FUSION_LEAD"), ("exec", "FUSION_EXEC"), ("review", "FUSION_REVIEW"), ("test_cmd", "FUSION_TEST_CMD")):
+    for k, envk in (("lead", "FUSION_LEAD"), ("exec", "FUSION_EXEC"), ("review", "FUSION_REVIEW"),
+                    ("tester", "FUSION_TESTER"), ("test_cmd", "FUSION_TEST_CMD")):
         if os.environ.get(envk):
             d[k] = os.environ[envk]
     return d
@@ -51,6 +53,7 @@ def add_role_flags(ap: argparse.ArgumentParser, d: dict) -> None:
     ap.add_argument("--lead", default=d["lead"], help=f"lead spec (default {d['lead']}); claude:* only for now")
     ap.add_argument("--exec", dest="exec_spec", default=d["exec"], help=f"sidekick spec (default {d['exec']})")
     ap.add_argument("--review", default=d["review"], help=f"reviewer spec or 'none' (default {d['review']})")
+    ap.add_argument("--tester", default=d["tester"], help="tester spec for end-to-end / computer-use verification, e.g. codex:gpt-5.6-terra or claude:sonnet (default none)")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -112,7 +115,7 @@ def main(argv: list[str] | None = None) -> None:
             rows += run_doctor()
             print(format_rows(rows), "\n")
         review = None if a.review.lower() == "none" else a.review
-        rows2 = run_smoke(a.lead, a.exec_spec, review)
+        rows2 = run_smoke(a.lead, a.exec_spec, review)  # smoke has no tester (toy repo has nothing to drive)
         print("\n" + format_rows(rows2))
         fails = sum(1 for _, s, _, _ in rows + rows2 if s == FAIL)
         print(f"\n{len(rows) + len(rows2) - fails}/{len(rows) + len(rows2)} passed")
@@ -149,8 +152,9 @@ def main(argv: list[str] | None = None) -> None:
 
     # run
     review = None if (a.solo or a.review.lower() == "none") else a.review
+    tester = None if (a.solo or not a.tester or a.tester.lower() == "none") else a.tester
     cfg = RunConfig(task=" ".join(a.task), cwd=Path(a.cwd), lead=a.lead, exec_spec=a.exec_spec, review=review,
-                    test_cmd=a.test_cmd, max_review_rounds=a.max_review_rounds, safe_mode=not a.no_safe_mode,
+                    tester=tester, test_cmd=a.test_cmd, max_review_rounds=a.max_review_rounds, safe_mode=not a.no_safe_mode,
                     strict=a.strict, budget_usd=a.budget, extra_allow=a.allow)
     if a.solo:
         cfg.exec_spec = "none"

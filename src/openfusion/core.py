@@ -17,7 +17,7 @@ Teammates:
 - SIDEKICK ({exec_spec}): does ALL implementation work (editing files, running commands, writing tests).
   Reach it with the shell command:   fusion-delegate "<brief>"
   The sidekick keeps its own persistent session across briefs, so later briefs can build on earlier ones.
-- REVIEWER ({review_spec}): reviews the finished change with fresh context after you report DONE.
+{tester_line}- REVIEWER ({review_spec}): reviews the finished change with fresh context after you report DONE.
 Rules:
 - You never edit files yourself. You plan, brief, monitor, verify, and review.
 - A brief states: objective, constraints, files/areas to touch, and success criteria (exact commands to
@@ -62,6 +62,7 @@ class RunConfig:
     lead: str = "claude:opus"
     exec_spec: str = "codex:gpt-5.6-luna"
     review: str | None = "codex:gpt-5.6-terra"
+    tester: str | None = None
     test_cmd: str | None = None
     max_review_rounds: int = 1
     safe_mode: bool = True
@@ -79,6 +80,7 @@ class Report:
     started: float
     lead: dict = field(default_factory=dict)
     sidekick: list[dict] = field(default_factory=list)
+    tester: list[dict] = field(default_factory=list)
     reviews: list[dict] = field(default_factory=list)
     final: str = ""
     wall_secs: float = 0.0
@@ -119,9 +121,14 @@ def make_shim(state: Path) -> Path:
     this very interpreter's module, so it works from `uv tool install`, `pipx`, or a plain checkout."""
     binp = state / "bin"
     binp.mkdir(parents=True, exist_ok=True)
-    shim = binp / "fusion-delegate"
-    shim.write_text(f'#!/bin/sh\nexec "{sys.executable}" -m openfusion.delegate "$@"\n')
-    shim.chmod(0o755)
+    # PYTHONPATH pins the package location so the shims work however fusion was installed
+    # (uv tool venv, pipx, brew venv, or the npm wrapper running the bundled source with system python).
+    pkg_root = Path(__file__).resolve().parent.parent
+    for name, role in (("fusion-delegate", "sidekick"), ("fusion-test", "tester")):
+        shim = binp / name
+        shim.write_text(f'#!/bin/sh\nFUSION_ROLE={role} PYTHONPATH="{pkg_root}${{PYTHONPATH:+:$PYTHONPATH}}" '
+                        f'exec "{sys.executable}" -m openfusion.delegate "$@"\n')
+        shim.chmod(0o755)
     return binp
 
 
@@ -149,6 +156,7 @@ def parse_lead_stream(out: str, rep: Report, bash_cmds: list[str]) -> None:
                 rep.lead["error"] = rep.final[:500]
     rep.lead["edits"] = sum(v for k, v in tools.items() if k in EDIT_TOOLS)
     rep.lead["delegations"] = tools.get("Bash(fusion-delegate)", 0)
+    rep.lead["test_briefs"] = tools.get("Bash(fusion-test)", 0)
 
 
 def run_review(cfg: RunConfig, state: Path, env: dict, log) -> dict:
@@ -221,6 +229,7 @@ def run_task(cfg: RunConfig, log=print) -> Report:
     env = dict(os.environ)
     env["PATH"] = f"{make_shim(state)}{os.pathsep}{env['PATH']}"
     env["FUSION_EXEC"] = cfg.exec_spec
+    env["FUSION_TESTER"] = cfg.tester or ""
     env["FUSION_STATE"] = str(run_state)
     session_id = str(uuid.uuid4())
     rep = Report(run_id=run_id, config={k: (str(v) if isinstance(v, Path) else v) for k, v in cfg.__dict__.items()},
@@ -229,8 +238,15 @@ def run_task(cfg: RunConfig, log=print) -> Report:
 
     verify_line = f"Verify with:  {cfg.test_cmd}" if cfg.test_cmd else \
         "Verify by having the sidekick run the project's tests/build, and spot-check with `git diff`."
-    rules = LEAD_RULES.format(exec_spec=cfg.exec_spec, review_spec=cfg.review or "none", verify_line=verify_line)
-    allow = ["Read", "Grep", "Glob", "Bash(fusion-delegate *)", "Bash(git diff *)", "Bash(git status *)", "Bash(git log *)"]
+    tester_line = ""
+    if cfg.tester:
+        tester_line = (f"- TESTER ({cfg.tester}): verifies changes end-to-end as a real user would (runs the CLI/app, hits\n"
+                       f"  endpoints, drives the browser/UI if it has browser or computer-use tools). Reach it with:   fusion-test \"<brief>\"\n"
+                       f"  Use it after implementation, before you report DONE, with concrete scenarios and expected outcomes.\n"
+                       f"  It never edits source; feed its FAIL findings back to the sidekick as new briefs.\n")
+    rules = LEAD_RULES.format(exec_spec=cfg.exec_spec, review_spec=cfg.review or "none", verify_line=verify_line,
+                              tester_line=tester_line)
+    allow = ["Read", "Grep", "Glob", "Bash(fusion-delegate *)", "Bash(fusion-test *)", "Bash(git diff *)", "Bash(git status *)", "Bash(git log *)"]
     if cfg.test_cmd:
         allow.append(f"Bash({cfg.test_cmd}*)")
     allow += cfg.extra_allow
@@ -254,7 +270,7 @@ def run_task(cfg: RunConfig, log=print) -> Report:
         if rc != 0 and not rep.final:
             rep.final = f"BLOCKED: lead exited {rc}: {(err or out).strip()[-300:]}"
 
-    log(f"fusion run {run_id}  lead={cfg.lead}  sidekick={cfg.exec_spec}  reviewer={cfg.review or 'none'}")
+    log(f"fusion run {run_id}  lead={cfg.lead}  sidekick={cfg.exec_spec}  tester={cfg.tester or 'none'}  reviewer={cfg.review or 'none'}")
     log(f"task: {cfg.task[:200]}")
     run_lead(cfg.task, resume=False)
     log(f"lead: {rep.final[:160]}")
@@ -278,6 +294,15 @@ def run_task(cfg: RunConfig, log=print) -> Report:
                 rep.sidekick.append({"secs": r.get("secs"), "usage": r.get("usage"), "brief": str(r.get("brief", ""))[:200]})
             except json.JSONDecodeError:
                 pass
+    tlog = run_state / "tester.log"
+    if tlog.exists():
+        for line in tlog.read_text().splitlines():
+            try:
+                r = json.loads(line)
+                rep.tester.append({"secs": r.get("secs"), "usage": r.get("usage"), "brief": str(r.get("brief", ""))[:200],
+                                   "report": str(r.get("report", ""))[:600]})
+            except json.JSONDecodeError:
+                pass
     rep.lead["bash"] = bash_cmds[:20]
     rep.wall_secs = round(time.time() - rep.started, 1)
     (runs / f"{run_id}.json").write_text(json.dumps(rep.__dict__, indent=1, default=str))
@@ -294,6 +319,10 @@ def format_report(rep: Report) -> str:
         f"{'lead':<10} {rep.config['lead']:<34} {L.get('secs', 0):>6}s  turns={L.get('turns')} delegations={L.get('delegations')} edits={L.get('edits')} cost=${L.get('cost_usd', 0)}",
         f"{'sidekick':<10} {rep.config['exec_spec']:<34} {sk_secs:>6.1f}s  briefs={len(rep.sidekick)} cost=${sk_cost:.4f} (0 when the harness bills a subscription)",
     ]
+    if rep.config.get("tester"):
+        t_cost = sum((t.get("usage") or {}).get("cost_usd") or 0.0 for t in rep.tester)
+        t_secs = sum(t.get("secs") or 0.0 for t in rep.tester)
+        lines.append(f"{'tester':<10} {rep.config['tester']:<34} {t_secs:>6.1f}s  briefs={len(rep.tester)} cost=${t_cost:.4f}")
     for i, rv in enumerate(rep.reviews, 1):
         u = rv.get("usage") or {}
         lines.append(f"{'review ' + str(i):<10} {rv.get('spec', ''):<34} {rv.get('secs', 0):>6}s  {rv.get('verdict')}: {str(rv.get('summary', ''))[:70]} {('tokens in=' + str(u.get('input_tokens'))) if u.get('input_tokens') else ''}")

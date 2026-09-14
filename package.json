@@ -1,0 +1,19 @@
+{
+  "name": "openfusion",
+  "version": "0.1.0",
+  "description": "Devin-Fusion-style orchestration on the AI subscriptions you already pay for: a frontier lead plans and reviews, a cheap sidekick executes.",
+  "license": "MIT",
+  "homepage": "https://github.com/andrewsiah/openfusion",
+  "repository": { "type": "git", "url": "git+https://github.com/andrewsiah/openfusion.git" },
+  "keywords": ["ai", "coding-agent", "claude-code", "codex", "orchestration", "openrouter"],
+  "bin": {
+    "fusion": "bin/fusion.js",
+    "fusion-delegate": "bin/fusion-delegate.js",
+    "fusion-test": "bin/fusion-test.js"
+  },
+  "files": ["bin", "src/openfusion", "README.md", "LICENSE"],
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "postinstall": "node bin/fusion.js --version || (echo 'openfusion needs python3 >= 3.11 on PATH (or set FUSION_PYTHON)' && exit 1)"
+  }
+}

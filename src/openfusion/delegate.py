@@ -4,6 +4,9 @@ OpenFusion's `delegate` tool as a plain CLI so a lead agent can call it through 
 calls resume it (Fusion's "persistent cached sidekick context").
 
 Usage:  fusion-delegate "<brief>"
+Also installed as `fusion-test`: the TESTER role (end-to-end / computer-use verification) using
+FUSION_TESTER as the spec; same harnesses, its own persistent session, logs to tester.log.
+
 Env:    FUSION_EXEC   harness:model[@provider] spec (default codex:gpt-5.6-luna)
                       harnesses: codex (ChatGPT login) | claude (Claude login) | grok (grok.com login)
                                  | pi (BYOK: pi:z-ai/glm-5.3@openrouter, pi:grok-4.6@xai, ...)
@@ -21,6 +24,7 @@ from pathlib import Path
 
 SPEC = os.environ.get("FUSION_EXEC", "codex:gpt-5.6-luna")
 STATE = Path(os.environ.get("FUSION_STATE", ".fusion"))
+ROLE = "sidekick"  # set to "tester" by test_main()
 
 SIDEKICK_RULES = (
     "You are the sidekick in a Fusion pair: an internal subagent of a lead agent that sends you briefs. "
@@ -30,6 +34,27 @@ SIDEKICK_RULES = (
     "project management (issue trackers, tickets, status updates): do not create or update tracking "
     "issues or notes, even if global instructions or memory files say to; the lead has already done it."
 )
+
+TESTER_RULES = (
+    "You are the TESTER in a Fusion team: an internal subagent that verifies changes end-to-end the way a "
+    "real user would. A lead agent sends you test briefs. Exercise the flows named in the brief for real: run "
+    "the CLI or app, hit the endpoints, drive the browser/UI if you have browser or computer-use tools, and "
+    "check outputs against the expected behavior. Do NOT modify source files in the repository (temporary "
+    "scripts or fixtures outside the repo are fine). Reply with a report: one line per scenario, "
+    "PASS or FAIL with the evidence (command/output/screenshot description), then any bugs found with exact "
+    "reproduction steps. The lead owns all task tracking; do not create or update tracking issues."
+)
+
+
+def rules() -> str:
+    return TESTER_RULES if ROLE == "tester" else SIDEKICK_RULES
+
+
+# Extra harness args per role, e.g. FUSION_TESTER_ARGS="--chrome" (Claude in Chrome) or "--enable browser_use".
+def extra_args() -> list[str]:
+    import shlex
+    return shlex.split(os.environ.get("FUSION_TESTER_ARGS" if ROLE == "tester" else "FUSION_EXEC_ARGS", ""))
+
 
 # Codex sandbox: inherit the user's ~/.codex/config.toml (their sandbox_mode works on their machine).
 # Override only if FUSION_CODEX_SANDBOX is set, e.g. workspace-write | danger-full-access.
@@ -48,7 +73,7 @@ def run(cmd: list[str], stdin: str | None = None) -> tuple[int, str, str]:
 
 
 def session_file(harness: str) -> Path:
-    return STATE / f"sidekick-{harness}.session"
+    return STATE / f"{ROLE}-{harness}.session"
 
 
 def delegate_codex(model: str, brief: str) -> tuple[str, dict]:
@@ -56,10 +81,10 @@ def delegate_codex(model: str, brief: str) -> tuple[str, dict]:
     base = ["codex", "exec"]
     if sf.exists():
         base += ["resume", sf.read_text().strip()]
-    base += ["--json", "--skip-git-repo-check", "-m", model, "-c", 'approval_policy="never"']
+    base += ["--json", "--skip-git-repo-check", "-m", model, "-c", 'approval_policy="never"'] + extra_args()
     if CODEX_SANDBOX:
         base += ["-c", f'sandbox_mode="{CODEX_SANDBOX}"']
-    prompt = f"{SIDEKICK_RULES}\n\nBRIEF:\n{brief}" if not sf.exists() else f"BRIEF:\n{brief}"
+    prompt = f"{rules()}\n\nBRIEF:\n{brief}" if not sf.exists() else f"BRIEF:\n{brief}"
     rc, out, err = run(base + [prompt])
     text, usage, thread = [], {}, None
     for line in out.splitlines():
@@ -91,7 +116,7 @@ def delegate_claude(model: str, brief: str) -> tuple[str, dict]:
     cmd = ["claude", "-p", f"BRIEF:\n{brief}", "--model", model, "--output-format", "json",
            "--permission-mode", "acceptEdits",
            "--allowedTools", "Read,Edit,Write,MultiEdit,Grep,Glob,Bash(python3 *),Bash(pytest *),Bash(uv *),Bash(git diff *),Bash(git status *)",
-           "--append-system-prompt", SIDEKICK_RULES]
+           "--append-system-prompt", rules()] + extra_args()
     if sf.exists():
         cmd += ["--resume", sf.read_text().strip()]
     rc, out, err = run(cmd)
@@ -108,7 +133,7 @@ def delegate_claude(model: str, brief: str) -> tuple[str, dict]:
 def delegate_grok(model: str, brief: str) -> tuple[str, dict]:
     sf = session_file("grok")
     cmd = ["grok", "-m", model, "--output-format", "json", "--always-approve",
-           "--rules", SIDEKICK_RULES]
+           "--rules", rules()] + extra_args()
     if sf.exists():
         cmd += ["--resume", sf.read_text().strip()]
     rc, out, err = run(cmd + ["-p", f"BRIEF:\n{brief}"])
@@ -178,7 +203,7 @@ def delegate_pi(model: str, brief: str) -> tuple[str, dict]:
         os.environ["PI_CODING_AGENT_DIR"] = str(cfg)
     cmd = ["pi", "-p", "--model", f"{provider}/{model}", "--mode", "json",
            "--no-context-files", "--no-extensions", "--no-skills", "--no-prompt-templates",
-           "--session-dir", str(sess_dir), "--append-system-prompt", SIDEKICK_RULES]
+           "--session-dir", str(sess_dir), "--append-system-prompt", rules()] + extra_args()
     if sf.exists():
         cmd += ["--session", sf.read_text().strip()]
     rc, out, err = run(cmd + [f"BRIEF:\n{brief}"])
@@ -213,12 +238,18 @@ def delegate_pi(model: str, brief: str) -> tuple[str, dict]:
 
 
 def main() -> None:
+    global SPEC
     STATE.mkdir(parents=True, exist_ok=True)
+    tool = "fusion-test" if ROLE == "tester" else "fusion-delegate"
+    if ROLE == "tester":
+        SPEC = os.environ.get("FUSION_TESTER", "")
+        if not SPEC:
+            die("no tester configured (FUSION_TESTER / --tester); ask the lead to verify another way")
     if len(sys.argv) < 2 or not sys.argv[1].strip():
-        die('usage: fusion-delegate "<brief>"')
+        die(f'usage: {tool} "<brief>"')
     brief = " ".join(sys.argv[1:])
     if ":" not in SPEC:
-        die(f"bad FUSION_EXEC spec {SPEC!r}; want harness:model[@provider]")
+        die(f"bad {ROLE} spec {SPEC!r}; want harness:model[@provider]")
     harness, model = SPEC.split(":", 1)
     fn = {"codex": delegate_codex, "claude": delegate_claude, "grok": delegate_grok,
           "pi": delegate_pi}.get(harness)
@@ -227,12 +258,22 @@ def main() -> None:
     t0 = time.time()
     report, usage = fn(model, brief)
     secs = round(time.time() - t0, 1)
-    with (STATE / "delegate.log").open("a") as f:
-        f.write(json.dumps({"ts": t0, "spec": SPEC, "brief": brief, "secs": secs,
+    with (STATE / ("tester.log" if ROLE == "tester" else "delegate.log")).open("a") as f:
+        f.write(json.dumps({"ts": t0, "role": ROLE, "spec": SPEC, "brief": brief, "secs": secs,
                             "usage": usage, "report": report[:2000]}) + "\n")
     print(report)
-    print(f"\n--- usage: {SPEC} {secs}s {json.dumps(usage)}")
+    print(f"\n--- usage: {ROLE} {SPEC} {secs}s {json.dumps(usage)}")
+
+
+def test_main() -> None:
+    """Entry point for `fusion-test`: same machinery, tester persona, FUSION_TESTER spec."""
+    global ROLE
+    ROLE = "tester"
+    main()
 
 
 if __name__ == "__main__":
-    main()
+    if os.environ.get("FUSION_ROLE") == "tester":
+        test_main()
+    else:
+        main()
