@@ -53,17 +53,19 @@ OpenFusion never reads, stores, or proxies your Claude or ChatGPT credentials. I
 
 Before there is a real `fusion` CLI, `scripts/` holds a two-file prototype of the core loop so you can check your machine is ready:
 
-- `scripts/fusion-delegate` — the `delegate` tool as a plain shell command. Hands a brief to a persistent sidekick session (`codex`, `claude`, or `grok`) and prints its report plus usage.
-- `scripts/smoke.py` — Part 1 pings each installed harness on your own login (Haiku, GPT-5.6 Luna, Grok 4.6). Part 2 seeds a throwaway repo with a failing test and runs a lead (`claude:sonnet` by default) that is told, by prompt only, to fix it via `fusion-delegate`. Passes when the test is green, the lead delegated at least once, and the lead made zero edits itself.
+- `scripts/fusion-delegate` — the `delegate` tool as a plain shell command. Hands a brief to a persistent sidekick session and prints its report plus usage. Harnesses: `codex` (ChatGPT login), `claude` (Claude login), `grok` (grok.com login), and `pi` for any bring-your-own-key model, e.g. `pi:z-ai/glm-5.3@openrouter`. Pi is [badlogic's pi-coding-agent](https://www.npmjs.com/package/@mariozechner/pi-coding-agent) (`npm i -g @mariozechner/pi-coding-agent`); it reads `OPENROUTER_API_KEY`, `XAI_API_KEY`, `GROQ_API_KEY`, `ZAI_API_KEY` etc. from env or the repo's gitignored `.env`.
+- `scripts/smoke.py` — Part 1 pings each installed harness on your own login or key. Part 2 seeds a throwaway repo with a failing test and runs a lead (`claude:sonnet` by default) that is told, by prompt only, to fix it via `fusion-delegate`. Part 3 runs a fresh-context reviewer (`codex:gpt-5.6-terra` by default) that returns a JSON verdict; one `request_changes` round is fed back to the lead. Passes when the test is green, the lead delegated at least once, the lead made zero edits itself, and the reviewer approved.
 
 ```bash
-python3 scripts/smoke.py                                  # everything, ~1–3 min
-python3 scripts/smoke.py --only harnesses                 # just the one-liners
-python3 scripts/smoke.py --only loop --lead claude:fable --exec codex:gpt-5.6-luna
-FUSION_EXEC=claude:haiku python3 scripts/smoke.py --only loop
+python3 scripts/smoke.py                                  # everything, ~1–2 min
+python3 scripts/smoke.py --only harnesses
+python3 scripts/smoke.py --only loop --lead claude:opus --exec codex:gpt-5.6-terra --review none
+python3 scripts/smoke.py --only loop --lead claude:opus --exec pi:z-ai/glm-5.3@openrouter --review codex:gpt-5.6-terra
 ```
 
-Notes from the first run on 2026-09-14: the lead is started with `--safe-mode` so your personal `CLAUDE.md`, skills and hooks don't leak into the role; Codex inherits your `~/.codex/config.toml` sandbox setting (its bubblewrap sandbox does not work on every Linux VM); Codex still reads your global `~/.codex/AGENTS.md`, so the sidekick prompt tells it the lead owns task tracking.
+Verified 2026-09-14 on one Linux VM: Opus lead + Codex Terra sidekick (5/5), and Opus lead + Pi sidekick on an OpenRouter model + Codex Terra reviewer (7/7, 66s, lead $0.22, sidekick $0.01, reviewer ~106k tokens of which 77k cached).
+
+Notes from the first runs: the lead is started with `--safe-mode` so your personal `CLAUDE.md`, skills and hooks don't leak into the role; Codex inherits your `~/.codex/config.toml` sandbox setting (its bubblewrap sandbox does not work on every Linux VM); Codex still reads your global `~/.codex/AGENTS.md`, so the sidekick and reviewer prompts say the lead owns task tracking; Pi runs with `--no-context-files` for the same reason. Pointing Claude Code itself at OpenRouter's Anthropic-compatible endpoint did not work for non-Anthropic models (401 loop), which is why BYOK models go through Pi. OpenAI strict JSON schemas need every property in `required`.
 
 ## Research
 

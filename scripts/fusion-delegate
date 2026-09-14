@@ -6,8 +6,9 @@ through Bash. The sidekick is a persistent session: the first call starts it, la
 calls resume it (Fusion's "persistent cached sidekick context").
 
 Usage:  fusion-delegate "<brief>"
-Env:    FUSION_EXEC   harness:model spec (default codex:gpt-5.6-luna)
-                      supported harnesses: codex | claude | grok
+Env:    FUSION_EXEC   harness:model[@provider] spec (default codex:gpt-5.6-luna)
+                      harnesses: codex (ChatGPT login) | claude (Claude login) | grok (grok.com login)
+                                 | pi (BYOK: pi:z-ai/glm-5.3@openrouter, pi:grok-4.6@xai, ...)
         FUSION_STATE  dir for session ids + logs (default ./.fusion)
 Output: the sidekick's final message, then a `--- usage` footer (tokens / cost / seconds).
 """
@@ -133,14 +134,63 @@ def delegate_grok(model: str, brief: str) -> tuple[str, dict]:
     return "\n".join(text).strip() or out.strip(), usage
 
 
+def delegate_pi(model: str, brief: str) -> tuple[str, dict]:
+    """Pi (badlogic's pi-coding-agent): the harness for OpenRouter / open-weight models.
+
+    Spec `pi:<model>@<provider>` -> `--model <provider>/<model>`; provider defaults to openrouter.
+    Pi reads OPENROUTER_API_KEY (and XAI_API_KEY, GROQ_API_KEY, ZAI_API_KEY, ...) from env.
+    """
+    provider = "openrouter"
+    if "@" in model:
+        model, provider = model.rsplit("@", 1)
+    sf = session_file("pi")
+    sess_dir = STATE / "pi-sessions"
+    sess_dir.mkdir(parents=True, exist_ok=True)
+    cmd = ["pi", "-p", "--model", f"{provider}/{model}", "--mode", "json",
+           "--no-context-files", "--no-extensions", "--no-skills", "--no-prompt-templates",
+           "--session-dir", str(sess_dir), "--append-system-prompt", SIDEKICK_RULES]
+    if sf.exists():
+        cmd += ["--session", sf.read_text().strip()]
+    rc, out, err = run(cmd + [f"BRIEF:\n{brief}"])
+    texts, usage, sid, errs = [], {"input": 0, "output": 0, "cacheRead": 0, "cost_usd": 0.0}, None, []
+    for line in out.splitlines():
+        try:
+            e = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if e.get("type") == "session":
+            sid = e.get("id")
+        elif e.get("type") == "message_end" and e.get("message", {}).get("role") == "assistant":
+            m = e["message"]
+            for b in m.get("content", []):
+                if b.get("type") == "text":
+                    texts.append(b["text"])
+            u = m.get("usage") or {}
+            usage["input"] += u.get("input", 0)
+            usage["output"] += u.get("output", 0)
+            usage["cacheRead"] += u.get("cacheRead", 0)
+            usage["cost_usd"] += (u.get("cost") or {}).get("total", 0)
+            if m.get("stopReason") == "error":
+                errs.append(m.get("errorMessage", "unknown error"))
+    if sid:
+        sf.write_text(sid)
+    if errs and not texts:
+        die(f"pi/{provider}/{model}: {errs[-1][:400]}")
+    if rc != 0 and not texts:
+        die(f"pi exited {rc}: {(err or out).strip()[:500]}")
+    usage["cost_usd"] = round(usage["cost_usd"], 5)
+    return "\n".join(texts).strip(), usage
+
+
 def main() -> None:
     if len(sys.argv) < 2 or not sys.argv[1].strip():
         die('usage: fusion-delegate "<brief>"')
     brief = " ".join(sys.argv[1:])
     if ":" not in SPEC:
-        die(f"bad FUSION_EXEC spec {SPEC!r}; want harness:model")
+        die(f"bad FUSION_EXEC spec {SPEC!r}; want harness:model[@provider]")
     harness, model = SPEC.split(":", 1)
-    fn = {"codex": delegate_codex, "claude": delegate_claude, "grok": delegate_grok}.get(harness)
+    fn = {"codex": delegate_codex, "claude": delegate_claude, "grok": delegate_grok,
+          "pi": delegate_pi}.get(harness)
     if not fn:
         die(f"unsupported harness {harness!r}")
     t0 = time.time()
