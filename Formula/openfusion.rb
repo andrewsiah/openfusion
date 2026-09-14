@@ -7,7 +7,7 @@ class Openfusion < Formula
   desc "Devin-Fusion-style orchestration on the AI subscriptions you already pay for"
   homepage "https://github.com/andrewsiah/openfusion"
   url "https://github.com/andrewsiah/openfusion/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "SHA256_PLACEHOLDER"
+  sha256 "8c738f7d0705830eaa1e4d0b4f1648da819032a97c2508cd9d841caf88490435"
   license "MIT"
   head "https://github.com/andrewsiah/openfusion.git", branch: "main"
 
