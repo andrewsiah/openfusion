@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "openfusion"
+version = "0.1.0"
+description = "Devin-Fusion-style orchestration on the AI subscriptions you already pay for: a frontier lead plans and reviews, a cheap sidekick executes."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = []
+keywords = ["ai", "coding-agent", "claude-code", "codex", "orchestration", "openrouter"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Topic :: Software Development",
+]
+
+[project.urls]
+Homepage = "https://github.com/andrewsiah/openfusion"
+
+[project.scripts]
+fusion = "openfusion.cli:main"
+fusion-delegate = "openfusion.delegate:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/openfusion"]

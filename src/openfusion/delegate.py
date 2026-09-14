@@ -1,8 +1,6 @@
-#!/usr/bin/env python3
 """fusion-delegate — hand a brief to the sidekick and return its report.
 
-Prototype of OpenFusion's `delegate` tool as a plain CLI so a lead agent can call it
-through Bash. The sidekick is a persistent session: the first call starts it, later
+OpenFusion's `delegate` tool as a plain CLI so a lead agent can call it through Bash. The sidekick is a persistent session: the first call starts it, later
 calls resume it (Fusion's "persistent cached sidekick context").
 
 Usage:  fusion-delegate "<brief>"
@@ -23,7 +21,6 @@ from pathlib import Path
 
 SPEC = os.environ.get("FUSION_EXEC", "codex:gpt-5.6-luna")
 STATE = Path(os.environ.get("FUSION_STATE", ".fusion"))
-STATE.mkdir(parents=True, exist_ok=True)
 
 SIDEKICK_RULES = (
     "You are the sidekick in a Fusion pair: an internal subagent of a lead agent that sends you briefs. "
@@ -45,7 +42,8 @@ def die(msg: str, code: int = 2) -> None:
 
 
 def run(cmd: list[str], stdin: str | None = None) -> tuple[int, str, str]:
-    p = subprocess.run(cmd, input=stdin, text=True, capture_output=True)
+    p = subprocess.run(cmd, input=stdin, text=True, capture_output=True,
+                       **({} if stdin is not None else {"stdin": subprocess.DEVNULL}))
     return p.returncode, p.stdout, p.stderr
 
 
@@ -215,6 +213,7 @@ def delegate_pi(model: str, brief: str) -> tuple[str, dict]:
 
 
 def main() -> None:
+    STATE.mkdir(parents=True, exist_ok=True)
     if len(sys.argv) < 2 or not sys.argv[1].strip():
         die('usage: fusion-delegate "<brief>"')
     brief = " ".join(sys.argv[1:])

@@ -3,75 +3,136 @@
 **Devin-Fusion-style orchestration on the AI subscriptions you already pay for.**
 
 ```bash
-uv tool install openfusion
+uv tool install git+https://github.com/andrewsiah/openfusion
 fusion "add rate limiting to /api/upload with tests"
 ```
 
-A frontier model (your Claude Max **Fable/Opus** or ChatGPT **Astra**) plans, briefs, monitors and reviews. A cheap, fast model (**GPT-5.6 Luna**, **Haiku**, or **GLM / Grok / Kimi / DeepSeek via OpenRouter**) does the typing. You get frontier-quality judgment at a fraction of the tokens and wall-clock, without a new API bill.
+A frontier model you already pay for (Claude **Opus/Fable** on your Claude plan) is the **lead**: it plans, writes briefs, monitors, and verifies. A cheap, fast model is the **sidekick** that does the typing: **GPT-5.6 Luna** on your ChatGPT plan, **Haiku** on your Claude plan, or **GLM-5.3 / Grok / Kimi / DeepSeek** through your own OpenRouter key. A fresh-context **reviewer** (by default GPT-5.6 Terra on your ChatGPT plan) approves or requests changes before you see "done".
 
-> Status: research + plan stage. No code yet. See [PLAN.md](PLAN.md).
+You get frontier judgment at a fraction of the frontier tokens and wall-clock, with no new API bill for the lead. Status: **v0.1, working prototype**. Private while we dogfood.
 
 ## Why
 
-[Cognition's Devin Fusion](https://cognition.com/blog/devin-fusion) showed that a persistent frontier "lead" that only plans and reviews, paired with a persistent cheap "sidekick" that executes, cuts cost 23–46% at roughly equal quality. The insight: the smart model should be the *planner*, not the *typist*, and the two should exchange **briefs and results**, not whole conversations.
+[Cognition's Devin Fusion](https://cognition.com/blog/devin-fusion) showed that a persistent frontier lead that only plans and reviews, paired with a persistent cheap sidekick that executes, cuts cost 23–46% at roughly equal quality. The insight: the smart model should be the *planner*, not the *typist*, and the two should exchange **briefs and results**, not whole conversations.
 
-Most of us already pay for Claude and/or ChatGPT, and the CLIs for both (`claude`, `codex`) are excellent harnesses. OpenFusion doesn't build a new harness. It spawns the **unmodified** binaries you're already logged into, assigns each a role, and wires them together with a local MCP `delegate` tool. Executors can also be any model behind your own OpenRouter key via OpenCode.
+OpenFusion doesn't build a new agent harness. It runs the **unmodified** coding-agent CLIs you already have logged in (`claude`, `codex`, `pi`, `grok`), assigns each a role, and gives the lead one extra tool: `fusion-delegate "<brief>"`. That's the whole trick. Research notes: [docs/research/](docs/research/). Plan: [PLAN.md](PLAN.md).
+
+## Install
+
+Requirements: Python ≥ 3.11 and [uv](https://docs.astral.sh/uv/) (or pipx). No Python dependencies.
+
+```bash
+uv tool install git+https://github.com/andrewsiah/openfusion     # → `fusion` and `fusion-delegate` on PATH
+fusion --version
+```
+
+Then install and log in to the harnesses for the roles you want. You need at least the lead's:
+
+| Harness | Install | Log in / key | Used for |
+|---|---|---|---|
+| Claude Code | `npm i -g @anthropic-ai/claude-code` | run `claude` once and sign in with your Claude plan | lead (`claude:opus`, `claude:fable`), sidekick (`claude:haiku`), reviewer |
+| Codex CLI | `npm i -g @openai/codex` | `codex login` with your ChatGPT plan | sidekick (`codex:gpt-5.6-luna`), reviewer (`codex:gpt-5.6-terra`) |
+| Pi | `npm i -g @mariozechner/pi-coding-agent` | `export OPENROUTER_API_KEY=sk-or-…` (or put it in `./.env`) | any BYOK model: `pi:z-ai/glm-5.3@openrouter`, `pi:x-ai/grok-4.6@openrouter`, `pi:grok-4.6@xai` … |
+| Grok Build CLI | xAI's `grok` | grok.com login | sidekick (`grok:grok-4.6`) |
+
+Check everything in one go:
+
+```bash
+fusion doctor
+```
+
+```
+check                          status time    detail
+claude:haiku                   PASS   7.6s    result='OK' cost=$0.0269
+codex:gpt-5.6-luna             PASS   7.0s    result='OK' in=22266 cached=9984
+grok:grok-4.6                  FAIL   1.0s    402 Payment Required: Grok Build usage balance exhausted
+pi:z-ai/glm-5.3@openrouter     PASS   1.8s    result='OK' cost=$0.0003
+```
+
+## First run
+
+Prove the loop works on a throwaway repo (seeds a failing test; the lead must fix it *through* the sidekick and the reviewer must approve):
+
+```bash
+fusion smoke                                   # defaults: lead claude:opus, sidekick codex:gpt-5.6-luna, reviewer codex:gpt-5.6-terra
+fusion smoke --exec pi:z-ai/glm-5.3@openrouter # GLM as the sidekick
+```
+
+Then run a real task from inside your repo:
+
+```bash
+cd your-project
+fusion "Make slugify() handle unicode and collapse repeated hyphens; add unittest cases" --test-cmd "python3 -m unittest -q"
+```
+
+What you see:
+
+```
+fusion run 20260914-190040-3c3241  lead=claude:opus  sidekick=pi:z-ai/glm-5.3@openrouter  reviewer=codex:gpt-5.6-terra
+lead: Verified: diff is confined to ... DONE: Fixed add() in calc.py ...
+review: approve — calc.py correctly changes add() to return a + b ...
+status: done   wall: 39.0s
+role       spec                                  time  detail
+lead       claude:opus                          19.5s  turns=6 delegations=1 edits=0 cost=$0.1975
+sidekick   pi:z-ai/glm-5.3@openrouter            3.5s  briefs=1 cost=$0.0032
+review 1   codex:gpt-5.6-terra                  19.5s  approve: ...
+```
+
+The lead never edits files itself (`edits=0`); it briefs the sidekick, verifies with your test command and `git diff`, and reports `DONE:`. The reviewer then checks the diff with fresh context. If it requests changes, the feedback goes back to the lead's live session for one more round. Changes land **uncommitted** in your working tree for you to inspect and commit. Reports are saved to `.fusion/runs/`; `fusion runs` lists them. Add `.fusion/` to your `.gitignore`.
+
+## Choosing models
+
+Every role is `harness:model[@provider]`:
+
+```bash
+fusion "…" --lead claude:opus  --exec codex:gpt-5.6-luna          --review codex:gpt-5.6-terra   # Claude + ChatGPT plans (default)
+fusion "…" --lead claude:opus  --exec claude:haiku                --review claude:opus           # Claude plan only
+fusion "…" --lead claude:fable --exec pi:z-ai/glm-5.3@openrouter  --review codex:gpt-5.6-terra   # OpenRouter sidekick
+fusion "…" --lead claude:opus  --exec pi:x-ai/grok-4.6@openrouter --review none                   # no reviewer
+fusion "…" --solo                                                                                 # baseline: Opus does everything itself
+```
+
+Set your own defaults once in `~/.config/fusion/config.toml`:
+
+```toml
+[defaults]
+lead = "claude:opus"
+exec = "pi:z-ai/glm-5.3@openrouter"
+review = "codex:gpt-5.6-terra"
+test_cmd = "uv run pytest -q"
+```
+
+Or with env vars `FUSION_LEAD`, `FUSION_EXEC`, `FUSION_REVIEW`, `FUSION_TEST_CMD`. Precedence: flags > env > config > built-ins.
+
+Useful flags: `--test-cmd` (the lead may run it to verify; it's also handed to the reviewer), `--allow 'Bash(npm test*)'` (extra lead tool rule), `--budget 2.00` (cap the lead's spend), `--max-review-rounds 2`, `--strict` (also *remove* Edit/Write from the lead instead of relying on the prompt), `--no-safe-mode` (let the lead load your CLAUDE.md, hooks and skills; off by default so personal automation doesn't leak into the role).
 
 ## How it works
 
 ```
 fusion "task"
-  ├─ Lead      claude:fable        persistent, role prompt + delegate() tool   plans, briefs, reviews
-  ├─ Sidekick  codex:gpt-5.6-luna  persistent session resumed per brief       edits, runs tests, reports
-  ├─ Reviewer  codex:gpt-6-astra   fresh context, read-only                   approve / request changes
-  └─ Report    wall-clock + per-role cost
+  ├─ Lead      claude:opus            one persistent Claude Code session, plus a role prompt and the
+  │                                   fusion-delegate tool. Plans, briefs, verifies, reports DONE.
+  ├─ Sidekick  codex / pi / claude    one persistent session, resumed per brief (its prompt cache stays warm).
+  │                                   Edits files, runs tests, reports back.
+  ├─ Reviewer  codex / claude         fresh context, read-only, strict-JSON verdict; 1 feedback round by default.
+  └─ Report    .fusion/runs/<id>.json wall-clock, per-role turns/tokens/cost, lead edit count.
 ```
 
-Roles are `harness:model[@provider]` specs. Presets:
-
-| Preset | Lead | Executor | Reviewer |
-|---|---|---|---|
-| `dual` | `claude:fable` | `codex:gpt-5.6-luna` | `codex:gpt-6-astra` |
-| `claude` | `claude:fable` | `claude:haiku` | `claude:opus` |
-| `codex` | `codex:gpt-6-astra` | `codex:gpt-5.6-luna` | `codex:gpt-6-astra` |
-| `openrouter` | `claude:fable` | `opencode:z-ai/glm-5.3@openrouter` | `claude:opus` |
-| `byok` | `opencode:…@openrouter` | `opencode:…@openrouter` | `opencode:…@openrouter` |
-
-```bash
-fusion init                                   # detect logins, pick a preset
-fusion -p openrouter "…"
-fusion --lead claude:fable --exec opencode:x-ai/grok-4.6@openrouter "…"
-fusion --solo "…"                             # baseline: lead does everything
-fusion runs                                   # cost / time history
-```
+Design choices, all from Cognition's write-ups and our first runs: the lead is hands-off *by instruction*, not by tool surgery (frontier models follow the role prompt; `--strict` exists if yours doesn't); one sidekick writes at a time; reviewers get fresh context; measure cost per task, not per token. Full rationale in [PLAN.md](PLAN.md).
 
 ## Subscription usage and terms
 
-OpenFusion never reads, stores, or proxies your Claude or ChatGPT credentials. It runs the vendors' own unmodified CLIs, which you log into yourself. Usage still counts against your plan limits. Anthropic's terms say plan limits "assume ordinary, individual usage of Claude Code" and reserve enforcement rights; if that's a concern, point the lead at an API key or a different vendor with one flag. Details in [docs/research/harnesses.md](docs/research/harnesses.md).
+OpenFusion never reads, stores, or proxies your Claude or ChatGPT credentials. It runs the vendors' own unmodified CLIs, which you log into yourself, and injects only your BYOK provider keys into the child process that needs them. Subscription usage still counts against your plan limits. Anthropic's terms say plan limits "assume ordinary, individual usage of Claude Code" and reserve enforcement rights; if that concerns you, point the lead at an API key or another vendor with one flag. Details in [docs/research/harnesses.md](docs/research/harnesses.md).
 
-## Smoke test (prototype)
+## Troubleshooting
 
-Before there is a real `fusion` CLI, `scripts/` holds a two-file prototype of the core loop so you can check your machine is ready:
+- **`402 … fewer max_tokens` from OpenRouter (Pi)**: your balance can't cover Pi's default 16k output cap. Top up, or `export FUSION_PI_MAX_TOKENS=4096`; fusion-delegate then writes a private Pi model config with that cap and the model's OpenRouter price.
+- **Codex sidekick fails with `bwrap: … Operation not permitted`**: Codex's Linux sandbox doesn't work on that VM. fusion inherits your `~/.codex/config.toml` `sandbox_mode`; set it there, or `export FUSION_CODEX_SANDBOX=workspace-write` where bwrap works.
+- **Lead ignores the role / does things from your global instructions**: keep the default safe mode. Codex sidekicks still read `~/.codex/AGENTS.md`; the sidekick prompt tells them the lead owns task tracking, so tracker-heavy global instructions don't fire.
+- **Lead edits files itself**: check `edits=` in the report; add `--strict`.
+- **Reviewer says `error` or hangs**: see `.fusion/state/<run>/review-last.json` and `lead.jsonl`; try `--review claude:opus` or `--review none`.
+- **Codex prints MCP auth errors at start**: harmless noise from your Codex plugins' MCP servers.
 
-- `scripts/fusion-delegate` — the `delegate` tool as a plain shell command. Hands a brief to a persistent sidekick session and prints its report plus usage. Harnesses: `codex` (ChatGPT login), `claude` (Claude login), `grok` (grok.com login), and `pi` for any bring-your-own-key model, e.g. `pi:z-ai/glm-5.3@openrouter`. Pi is [badlogic's pi-coding-agent](https://www.npmjs.com/package/@mariozechner/pi-coding-agent) (`npm i -g @mariozechner/pi-coding-agent`); it reads `OPENROUTER_API_KEY`, `XAI_API_KEY`, `GROQ_API_KEY`, `ZAI_API_KEY` etc. from env or the repo's gitignored `.env`.
-- `scripts/smoke.py` — Part 1 pings each installed harness on your own login or key. Part 2 seeds a throwaway repo with a failing test and runs a lead (`claude:sonnet` by default) that is told, by prompt only, to fix it via `fusion-delegate`. Part 3 runs a fresh-context reviewer (`codex:gpt-5.6-terra` by default) that returns a JSON verdict; one `request_changes` round is fed back to the lead. Passes when the test is green, the lead delegated at least once, the lead made zero edits itself, and the reviewer approved.
+## Contributing
 
-```bash
-python3 scripts/smoke.py                                  # everything, ~1–2 min
-python3 scripts/smoke.py --only harnesses
-python3 scripts/smoke.py --only loop --lead claude:opus --exec codex:gpt-5.6-terra --review none
-python3 scripts/smoke.py --only loop --lead claude:opus --exec pi:z-ai/glm-5.3@openrouter --review codex:gpt-5.6-terra
-```
-
-Verified 2026-09-14 on one Linux VM: Opus lead + Codex Terra sidekick (5/5, 40s); Opus lead + Pi/GLM-5.3 sidekick on OpenRouter + Codex Terra reviewer (7/7, 41s; lead $0.17 over 5 turns, sidekick 3.3s, reviewer 23s approve). If OpenRouter returns `402 ... fewer max_tokens`, your balance can't cover Pi's default 16k output cap: set `FUSION_PI_MAX_TOKENS=4096` (or top up) and fusion-delegate writes a private Pi model config with that cap and the model's OpenRouter price.
-
-Notes from the first runs: the lead is started with `--safe-mode` so your personal `CLAUDE.md`, skills and hooks don't leak into the role; Codex inherits your `~/.codex/config.toml` sandbox setting (its bubblewrap sandbox does not work on every Linux VM); Codex still reads your global `~/.codex/AGENTS.md`, so the sidekick and reviewer prompts say the lead owns task tracking; Pi runs with `--no-context-files` for the same reason. Pointing Claude Code itself at OpenRouter's Anthropic-compatible endpoint did not work for non-Anthropic models (401 loop), which is why BYOK models go through Pi. OpenAI strict JSON schemas need every property in `required`.
-
-## Research
-
-- [docs/research/devin-fusion.md](docs/research/devin-fusion.md) — what Cognition actually published, numbers, related work, OSS landscape
-- [docs/research/harnesses.md](docs/research/harnesses.md) — Claude Code / Codex / OpenCode headless interfaces, auth rules, routing to open models, Sept 2026 pricing
-
-## License
-
-MIT
+Adding a harness is one function in `src/openfusion/delegate.py` (spawn it, resume it, parse its final message and usage). Adding a reviewer harness is one branch in `core.run_review`. Please run `fusion smoke` before opening a PR. MIT licensed.
