@@ -49,6 +49,22 @@ fusion runs                                   # cost / time history
 
 OpenFusion never reads, stores, or proxies your Claude or ChatGPT credentials. It runs the vendors' own unmodified CLIs, which you log into yourself. Usage still counts against your plan limits. Anthropic's terms say plan limits "assume ordinary, individual usage of Claude Code" and reserve enforcement rights; if that's a concern, point the lead at an API key or a different vendor with one flag. Details in [docs/research/harnesses.md](docs/research/harnesses.md).
 
+## Smoke test (prototype)
+
+Before there is a real `fusion` CLI, `scripts/` holds a two-file prototype of the core loop so you can check your machine is ready:
+
+- `scripts/fusion-delegate` — the `delegate` tool as a plain shell command. Hands a brief to a persistent sidekick session (`codex`, `claude`, or `grok`) and prints its report plus usage.
+- `scripts/smoke.py` — Part 1 pings each installed harness on your own login (Haiku, GPT-5.6 Luna, Grok 4.6). Part 2 seeds a throwaway repo with a failing test and runs a lead (`claude:sonnet` by default) that is told, by prompt only, to fix it via `fusion-delegate`. Passes when the test is green, the lead delegated at least once, and the lead made zero edits itself.
+
+```bash
+python3 scripts/smoke.py                                  # everything, ~1–3 min
+python3 scripts/smoke.py --only harnesses                 # just the one-liners
+python3 scripts/smoke.py --only loop --lead claude:fable --exec codex:gpt-5.6-luna
+FUSION_EXEC=claude:haiku python3 scripts/smoke.py --only loop
+```
+
+Notes from the first run on 2026-09-14: the lead is started with `--safe-mode` so your personal `CLAUDE.md`, skills and hooks don't leak into the role; Codex inherits your `~/.codex/config.toml` sandbox setting (its bubblewrap sandbox does not work on every Linux VM); Codex still reads your global `~/.codex/AGENTS.md`, so the sidekick prompt tells it the lead owns task tracking.
+
 ## Research
 
 - [docs/research/devin-fusion.md](docs/research/devin-fusion.md) — what Cognition actually published, numbers, related work, OSS landscape

@@ -1,0 +1,157 @@
+#!/usr/bin/env python3
+"""fusion-delegate — hand a brief to the sidekick and return its report.
+
+Prototype of OpenFusion's `delegate` tool as a plain CLI so a lead agent can call it
+through Bash. The sidekick is a persistent session: the first call starts it, later
+calls resume it (Fusion's "persistent cached sidekick context").
+
+Usage:  fusion-delegate "<brief>"
+Env:    FUSION_EXEC   harness:model spec (default codex:gpt-5.6-luna)
+                      supported harnesses: codex | claude | grok
+        FUSION_STATE  dir for session ids + logs (default ./.fusion)
+Output: the sidekick's final message, then a `--- usage` footer (tokens / cost / seconds).
+"""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+SPEC = os.environ.get("FUSION_EXEC", "codex:gpt-5.6-luna")
+STATE = Path(os.environ.get("FUSION_STATE", ".fusion"))
+STATE.mkdir(parents=True, exist_ok=True)
+
+SIDEKICK_RULES = (
+    "You are the sidekick in a Fusion pair: an internal subagent of a lead agent that sends you briefs. "
+    "Do exactly what the brief asks inside the current working directory, verify it (run the tests or "
+    "commands named in the brief), then reply with a short report: what you changed (files), how you "
+    "verified it, and any open questions. Do not expand scope. The lead owns all task tracking and "
+    "project management (issue trackers, tickets, status updates): do not create or update tracking "
+    "issues or notes, even if global instructions or memory files say to; the lead has already done it."
+)
+
+# Codex sandbox: inherit the user's ~/.codex/config.toml (their sandbox_mode works on their machine).
+# Override only if FUSION_CODEX_SANDBOX is set, e.g. workspace-write | danger-full-access.
+CODEX_SANDBOX = os.environ.get("FUSION_CODEX_SANDBOX")
+
+
+def die(msg: str, code: int = 2) -> None:
+    print(f"fusion-delegate error: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def run(cmd: list[str], stdin: str | None = None) -> tuple[int, str, str]:
+    p = subprocess.run(cmd, input=stdin, text=True, capture_output=True)
+    return p.returncode, p.stdout, p.stderr
+
+
+def session_file(harness: str) -> Path:
+    return STATE / f"sidekick-{harness}.session"
+
+
+def delegate_codex(model: str, brief: str) -> tuple[str, dict]:
+    sf = session_file("codex")
+    base = ["codex", "exec"]
+    if sf.exists():
+        base += ["resume", sf.read_text().strip()]
+    base += ["--json", "--skip-git-repo-check", "-m", model, "-c", 'approval_policy="never"']
+    if CODEX_SANDBOX:
+        base += ["-c", f'sandbox_mode="{CODEX_SANDBOX}"']
+    prompt = f"{SIDEKICK_RULES}\n\nBRIEF:\n{brief}" if not sf.exists() else f"BRIEF:\n{brief}"
+    rc, out, err = run(base + [prompt])
+    text, usage, thread = [], {}, None
+    for line in out.splitlines():
+        try:
+            e = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        t = e.get("type")
+        if t == "thread.started":
+            thread = e.get("thread_id")
+        elif t == "item.completed" and e.get("item", {}).get("type") == "agent_message":
+            text.append(e["item"].get("text", ""))
+        elif t == "turn.completed":
+            usage = e.get("usage", {})
+        elif t == "error":
+            text.append(f"[codex error] {e.get('message')}")
+    if thread:
+        sf.write_text(thread)
+    if rc != 0 and not text:
+        die(f"codex exited {rc}: {err.strip()[:500]}")
+    return "\n".join(text).strip(), {"input_tokens": usage.get("input_tokens"),
+                                    "cached_input_tokens": usage.get("cached_input_tokens"),
+                                    "output_tokens": usage.get("output_tokens")}
+
+
+def delegate_claude(model: str, brief: str) -> tuple[str, dict]:
+    sf = session_file("claude")
+    # prompt goes right after -p: --allowedTools is variadic and would swallow a trailing prompt
+    cmd = ["claude", "-p", f"BRIEF:\n{brief}", "--model", model, "--output-format", "json",
+           "--permission-mode", "acceptEdits",
+           "--allowedTools", "Read,Edit,Write,MultiEdit,Grep,Glob,Bash(python3 *),Bash(pytest *),Bash(uv *),Bash(git diff *),Bash(git status *)",
+           "--append-system-prompt", SIDEKICK_RULES]
+    if sf.exists():
+        cmd += ["--resume", sf.read_text().strip()]
+    rc, out, err = run(cmd)
+    try:
+        d = json.loads(out)
+    except json.JSONDecodeError:
+        die(f"claude exited {rc}, non-JSON output: {(out or err)[:500]}")
+    if d.get("session_id"):
+        sf.write_text(d["session_id"])
+    return str(d.get("result", "")).strip(), {"cost_usd": d.get("total_cost_usd"),
+                                              "turns": d.get("num_turns")}
+
+
+def delegate_grok(model: str, brief: str) -> tuple[str, dict]:
+    sf = session_file("grok")
+    cmd = ["grok", "-m", model, "--output-format", "json", "--always-approve",
+           "--rules", SIDEKICK_RULES]
+    if sf.exists():
+        cmd += ["--resume", sf.read_text().strip()]
+    rc, out, err = run(cmd + ["-p", f"BRIEF:\n{brief}"])
+    text, usage = [], {}
+    for line in out.splitlines():
+        try:
+            e = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if e.get("type") == "error":
+            die(f"grok: {e.get('message')}")
+        if e.get("session_id"):
+            sf.write_text(e["session_id"])
+        for key in ("result", "text", "content"):
+            if isinstance(e.get(key), str):
+                text.append(e[key])
+        if isinstance(e.get("usage"), dict):
+            usage = e["usage"]
+    if rc != 0 and not text:
+        die(f"grok exited {rc}: {(err or out).strip()[:500]}")
+    return "\n".join(text).strip() or out.strip(), usage
+
+
+def main() -> None:
+    if len(sys.argv) < 2 or not sys.argv[1].strip():
+        die('usage: fusion-delegate "<brief>"')
+    brief = " ".join(sys.argv[1:])
+    if ":" not in SPEC:
+        die(f"bad FUSION_EXEC spec {SPEC!r}; want harness:model")
+    harness, model = SPEC.split(":", 1)
+    fn = {"codex": delegate_codex, "claude": delegate_claude, "grok": delegate_grok}.get(harness)
+    if not fn:
+        die(f"unsupported harness {harness!r}")
+    t0 = time.time()
+    report, usage = fn(model, brief)
+    secs = round(time.time() - t0, 1)
+    with (STATE / "delegate.log").open("a") as f:
+        f.write(json.dumps({"ts": t0, "spec": SPEC, "brief": brief, "secs": secs,
+                            "usage": usage, "report": report[:2000]}) + "\n")
+    print(report)
+    print(f"\n--- usage: {SPEC} {secs}s {json.dumps(usage)}")
+
+
+if __name__ == "__main__":
+    main()
